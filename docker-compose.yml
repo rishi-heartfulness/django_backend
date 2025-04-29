@@ -1,0 +1,94 @@
+# services:
+#   db:
+#     image: mysql:latest
+#     container_name: mysql_db
+#     environment:
+#       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+#       MYSQL_DATABASE: ${DB_NAME}
+#       MYSQL_USER: ${DB_USERNAME}
+#       MYSQL_PASSWORD: ${DB_PASSWORD}
+#     ports:
+#       - "3306:3306"
+#     volumes:
+#       - mysql_data:/var/lib/mysql
+#     env_file:
+#       - .env
+
+#   django-web:
+#     image: python:latest
+#     build: .
+#     container_name: django-docker
+#     ports:
+#       - "8000:8000"
+#     depends_on:
+#       - db
+#     environment:
+#       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+#       DEBUG: ${DEBUG}
+#       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
+#       DATABASE_ENGINE: ${DATABASE_ENGINE}
+#       DATABASE_NAME: ${DB_NAME}
+#       DATABASE_USERNAME: ${DB_USERNAME}
+#       DATABASE_PASSWORD: ${DB_PASSWORD}
+#       DATABASE_HOST:  ${DB_HOST}    # Set to the service name of the MySQL container
+#       DATABASE_PORT: ${DB_PORT}
+#     env_file:
+#       - .env
+
+# volumes:
+#   mysql_data:
+
+
+
+services:
+  db:
+    image: mysql:latest
+    container_name: mysql_db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "3607:3306"
+    # volumes:
+    #   - mysql_data:/var/lib/mysql
+    env_file:
+      - .env
+
+
+  django-web:
+    image: python:latest  
+    container_name: django-docker
+    ports:
+      - "8000:8000"
+    # depends_on:
+    #   - db
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "
+      pip install -r requirements.txt &&
+      python manage.py migrate &&
+      python manage.py runserver 0.0.0.0:8000"
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DEBUG: ${DEBUG}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
+      DATABASE_ENGINE: ${DATABASE_ENGINE}
+      DATABASE_NAME: ${DB_NAME}
+      DATABASE_USERNAME: ${DB_USERNAME}
+      DATABASE_PASSWORD: ${DB_PASSWORD}
+      DATABASE_HOST: ${DB_HOST}
+      DATABASE_PORT: ${DB_PORT}
+    env_file:
+      - .env
+
+volumes:
+  mysql_data:
+
+
+
+
+
+# docker run --name mysql-container -e MYSQL_ROOT_PASSWORD=rishi -p 3308:3308 -v mysql_data:/var/lib/mysql -d mysql:latest
