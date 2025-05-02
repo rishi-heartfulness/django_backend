@@ -11,7 +11,7 @@ class CustomUser(AbstractUser,PermissionsMixin):
     class Meta:
         db_table = "users_data"
 
-class Products(models.Model):
+class Product(models.Model):
     name = models.CharField(max_length=255)
     price = models.IntegerField()
     category = models.CharField(max_length=255)
@@ -39,7 +39,7 @@ class Transaction(models.Model):
     total_products = models.IntegerField()
     total_price = models.IntegerField()
     transaction_mode = models.CharField(max_length=10,choices=PaymentMode.choices,default=PaymentMode.UPI)
-    products = models.ManyToManyField('Products', through='TransactionItem')
+    products = models.ManyToManyField('Product', through='TransactionItem')
 
     class Meta:
         db_table = "transactions_data"
@@ -49,8 +49,11 @@ class Transaction(models.Model):
 
 class TransactionItem(models.Model):
     transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE)
-    product = models.ForeignKey(Products, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField()
 
     class Meta:
         db_table = "transaction_items"
+
+
+        
