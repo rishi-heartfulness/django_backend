@@ -17,12 +17,12 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path,include
 from . import views
-from crud_api_app.swagger import schema_view
+from crud_api.swagger import schema_view
 # from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 urlpatterns = [
     path('',views.root),
-    path("api-method/",include("crud_api_app.urls")),
+    path("api-method/",include("crud_api.urls")),
     # path('swagger/', schema_view.with_ui('swagger',cache_timeout=0), name='schema-swagger-ui'),
     # path('api-auth/', include('rest_framework.urls')),
     path('admin/', admin.site.urls),
