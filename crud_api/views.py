@@ -44,7 +44,8 @@ class LoginView(APIView):
                 "access": str(refresh.access_token),
                 "refresh": str(refresh)
             }, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
 
 
 class ProductViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin,mixins.UpdateModelMixin,mixins.DestroyModelMixin,mixins.ListModelMixin,viewsets.GenericViewSet):
@@ -55,10 +56,9 @@ class ProductViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin,mixins.U
 
 
 class OrdersView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated,permissions.DjangoModelPermissions]
     def post(self, request):
         serializer = OrderSerializer(data=request.data)
-
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         data = serializer.validated_data
@@ -127,7 +127,7 @@ class OrdersView(APIView):
 
 
 class OrderSummaryView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated,permissions.DjangoModelPermissions]
 
     def get(self, request, customer_id):
         transaction_queryset = Transaction.objects.filter(customer_id=customer_id)

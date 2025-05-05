@@ -9,8 +9,6 @@ class ProductSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'price', 'category', 'description', 'stock']
 
 
-
-
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
@@ -36,3 +34,4 @@ class OrderSerializer(serializers.Serializer):
     customer_id = serializers.IntegerField()
     payment_mode = serializers.ChoiceField(choices=PaymentMode.values)
     orders = OrderItemSerializer(many=True)  
+

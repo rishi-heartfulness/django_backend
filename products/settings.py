@@ -9,10 +9,11 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
+from dotenv import load_dotenv
 import os
 from pathlib import Path
 from datetime import timedelta
-
+load_dotenv()  
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -24,8 +25,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECRET_KEY = 'django-insecure-&s__%#e7)_#6_x71#7r2awp57p3267^ia1&3azk3_gli$2eyv5'
 
-# SECRET_KEY = os.getenv('DJANGO_SECRET_KEY') 
-SECRET_KEY = os.getenv('DJANGO_SECRET_KEY','django-insecure-&s__%#e7)_#6_x71#7r2awp57p3267^ia1&3azk3_gli$2eyv5') 
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY') 
+# SECRET_KEY = os.getenv('DJANGO_SECRET_KEY','django-insecure-&s__%#e7)_#6_x71#7r2awp57p3267^ia1&3azk3_gli$2eyv5') 
 
 
 
@@ -33,9 +34,9 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'  # Ensure it’s a boolean
 ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', '').split(',')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+# ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
 # '127.0.0.1', 'localhost'
 
 # Application definition
@@ -47,7 +48,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
+
+    #internal
     'crud_api',
+
+    #external 
     'rest_framework',  
     'drf_yasg', 
     'rest_framework_simplejwt',
@@ -102,11 +108,11 @@ DATABASES = {
         # 'HOST': '127.0.0.1',  # or your DB host
         # 'PORT': '3306',        # default MySQL port
 
-        'ENGINE': os.getenv('DATABASE_ENGINE','django.db.backends.mysql'),
+        'ENGINE': os.getenv('DATABASE_ENGINE','django.db.backends.postgresql'),
         'NAME': os.getenv('DB_NAME'),
         'USER': os.getenv('DB_USERNAME'),
         'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST'),  # 'db' matches the service name in Docker Compose
+        'HOST': os.getenv('DB_HOST','db'),  # 'db' matches the service name in Docker Compose
         'PORT': os.getenv('DB_PORT'),
     }
 }
