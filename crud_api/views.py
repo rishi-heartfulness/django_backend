@@ -1,3 +1,384 @@
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth.hashers import make_password, check_password
+# from django.contrib.auth.models import User
+from .models import Product,CustomUser ,Transaction,PaymentMode ,TransactionItem
+from .serializers import ProductSerializer, OrderSerializer,OrderItemSerializer,LoginSerializer
+from rest_framework import generics, mixins, permissions,viewsets
+
+
+class RegisterView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        try:
+            email = request.data.get("email")
+            username = request.data.get("username")
+            password = request.data.get("password")
+            address = request.data.get("address")
+            phone = request.data.get("phone")
+
+            if CustomUser.objects.filter(email=email).exists():
+                return Response({"error": "User already exists"}, status=status.HTTP_409_CONFLICT)
+
+            new_user = CustomUser.objects.create_user(email=email, password=password, username=username,address=address,phone=phone)
+            new_user.save()
+            return Response({"message": "User registered successfully"}, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class LoginView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.validated_data["user"]
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                "message": "Login successful",
+                "access": str(refresh.access_token),
+                "refresh": str(refresh)
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
+
+
+class ProductViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin,mixins.UpdateModelMixin,mixins.DestroyModelMixin,mixins.ListModelMixin,viewsets.GenericViewSet):
+    queryset = Product.objects.all()
+    serializer_class = ProductSerializer
+    permission_classes = [permissions.IsAuthenticated,permissions.DjangoModelPermissions]
+    lookup_field = 'id'
+
+
+class OrdersView(APIView):
+    permission_classes = [permissions.IsAuthenticated,permissions.DjangoModelPermissions]
+    def post(self, request):
+        serializer = OrderSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+        customer_id = data["customer_id"]
+        payment_mode = data["payment_mode"].lower()
+        orders = data["orders"]
+
+        try:
+            # Get all product IDs from orders
+            product_ids = [item["product_id"] for item in orders]
+            products_queryset = Product.objects.filter(id__in=product_ids)
+            products_dict = {product.id: product for product in products_queryset}
+
+            total_bill = 0
+            total_products_ordered = 0
+            transaction_items = []
+
+            for item in orders:
+                product_id = item["product_id"]
+                quantity = item["quantity"]
+
+                product = products_dict.get(product_id)
+                if not product:
+                    return Response({"error": f"Product ID {product_id} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+                if quantity > product.stock:
+                    return Response({
+                        "error": f"Not enough stock for {product.name} (Available: {product.stock})"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # Reduce stock and calculate bill
+                product.stock -= quantity
+                total_bill += product.price * quantity
+                total_products_ordered += 1
+                transaction_items.append((product, quantity))
+
+            # Save stock updates
+            for product in products_dict.values():
+                product.save()
+
+            # Create transaction
+            transaction = Transaction.objects.create(
+                customer_id=customer_id,
+                total_products=total_products_ordered,
+                total_price=total_bill,
+                transaction_mode=payment_mode
+            )
+
+            # Link products to transaction
+            for product, quantity in transaction_items:
+                TransactionItem.objects.create(
+                    transaction=transaction,
+                    product=product,
+                    quantity=quantity
+                )
+
+            return Response({
+                "transaction_id": transaction.id,
+                "message": "Purchase successful",
+                "total_price": total_bill
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+class OrderSummaryView(APIView):
+    permission_classes = [permissions.IsAuthenticated,permissions.DjangoModelPermissions]
+
+    def get(self, request, customer_id):
+        transaction_queryset = Transaction.objects.filter(customer_id=customer_id)
+        order_summary = []
+        total_spent = 0
+        total_orders = len(transaction_queryset)
+
+        for order in transaction_queryset:
+            items = TransactionItem.objects.filter(transaction=order)
+            product_list = []
+
+            for item in items:
+                product = item.product
+                product_list.append({
+                    "product_id": product.id,
+                    "name": product.name,
+                    "price": product.price,
+                    "quantity": item.quantity,
+                    "subtotal": product.price * item.quantity
+                })
+
+            order_details = {
+                "transaction_id": order.id,
+                "total_price": order.total_price,
+                "payment_mode": order.transaction_mode,
+                "total_products": order.total_products,
+                "products": product_list
+            }
+
+            order_summary.append(order_details)
+            total_spent += order.total_price
+
+        return Response({
+            "order_summary": order_summary,
+            "total_orders": total_orders,
+            "total_spent": total_spent
+        })
+
+
+
+# class LoginView(APIView):
+#     permission_classes = [permissions.AllowAny]
+
+#     def post(self, request):
+#         try:
+#             email = request.data.get("email")
+#             password = request.data.get("password")
+
+#             if not email or not password:
+#                 return Response({"error": "Email and password are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+#             user_retrieved = CustomUser.objects.filter(email=email).first()
+#             if  user_retrieved and user_retrieved.check_password(password):
+
+#                 refresh = RefreshToken.for_user(user_retrieved)
+#                 return Response({
+#                     "message": "Login successful",
+#                     "access": str(refresh.access_token),
+#                     "refresh": str(refresh)
+#                 }, status=status.HTTP_200_OK)
+#             else:
+#                 return Response({"error": "Invalid email or password"}, status=status.HTTP_401_UNAUTHORIZED)
+#         except Exception as e:
+#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+# class OrdersView(APIView):
+#     permission_classes = [permissions.IsAuthenticated]
+
+#     def post(self, request):
+#         try:
+#             customer_id = request.data.get("customer_id")
+#             orders = request.data.get("orders", [])
+#             payment_mode = request.data.get("payment_mode", "").lower()
+
+#             if not customer_id or not orders or not payment_mode:
+#                 return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
+
+#             if payment_mode not in PaymentMode.values:
+#                 return Response({
+#                     "error": f"Invalid payment mode. Must be one of: {list(PaymentMode.values)}"
+#                 }, status=status.HTTP_400_BAD_REQUEST)
+
+#             # Fetch products once
+#             product_ids = [item.get("product_id") for item in orders]
+#             products_queryset = Products.objects.filter(id__in=product_ids)
+#             products_dict = {product.id: product for product in products_queryset}
+
+#             total_bill = 0
+#             total_products_ordered = 0
+#             transaction_items = []
+
+#             for item in orders:
+#                 product_id = item.get("product_id")
+#                 quantity = item.get("quantity")
+
+#                 if not product_id or not quantity:
+#                     return Response({"error": "Each order must include 'product_id' and 'quantity'."}, status=status.HTTP_400_BAD_REQUEST)
+
+#                 product = products_dict.get(product_id)
+#                 if not product:
+#                     return Response({"error": f"Product ID {product_id} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+#                 if quantity > product.stock:
+#                     return Response({
+#                         "error": f"Not enough stock for {product.name} (Available: {product.stock})"
+#                     }, status=status.HTTP_400_BAD_REQUEST)
+
+#                 # Reduce stock
+#                 product.stock -= quantity
+#                 total_bill += product.price * quantity
+#                 total_products_ordered += 1
+
+#                 # Prepare item entry
+#                 transaction_items.append((product, quantity))
+
+#             # Save stock
+#             for product in products_dict.values():
+#                 product.save()
+
+#             # Save transaction
+#             transaction = Transaction.objects.create(
+#                 customer_id=customer_id,
+#                 total_products=total_products_ordered,
+#                 total_price=total_bill,
+#                 transaction_mode=payment_mode
+#             )
+
+#             # Save related products in intermediate model
+#             for product, quantity in transaction_items:
+#                 TransactionItem.objects.create(
+#                     transaction=transaction,
+#                     product=product,
+#                     quantity=quantity
+#                 )
+
+#             return Response({
+#                 "transaction_id": transaction.id,
+#                 "message": "Purchase successful",
+#                 "total_price": total_bill
+#             }, status=status.HTTP_201_CREATED)
+
+#         except Exception as e:
+#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# class OrdersView(APIView):
+#     permission_classes = [permissions.AllowAny]
+
+#     def post(self, request):
+#         try:
+#             customer_id = request.data.get("customer_id")
+#             orders = request.data.get("orders", [])
+#             payment_mode = request.data.get("payment_mode", "").lower()
+
+#             if not customer_id or not orders or not payment_mode:
+#                 return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
+
+#             if payment_mode not in ["upi", "cod", "card"]:
+#                 return Response({"error": "Payment mode must be 'upi', 'cod', or 'card'."}, status=status.HTTP_400_BAD_REQUEST)
+
+#             # Fetch all products once
+#             products_queryset = Products.objects.all()
+#             products_dict = {product.id: product for product in products_queryset}  # Map by id for fast lookup
+
+#             total_bill = 0
+#             total_products_ordered = len(orders)
+
+#             for item in orders:
+#                 requested_product_id = item.get("product_id")
+#                 requested_quantity = item.get("quantity")
+
+#                 if requested_product_id not in products_dict:
+#                     return Response({"error": f"Product ID {requested_product_id} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+#                 product = products_dict[requested_product_id]
+
+#                 if requested_quantity > product.stock:
+#                     return Response({"error": f"Not enough stock for product {product.name} (Available: {product.stock})"}, status=status.HTTP_400_BAD_REQUEST)
+
+#                 # Update the stock in memory
+#                 product.stock -= requested_quantity
+
+#                 # Add to the bill
+#                 total_bill += product.price * requested_quantity
+
+#             # Save the updated stock to database
+#             for product in products_dict.values():
+#                 product.save()
+
+#             # Create transaction record
+#             transaction = Transaction.objects.create(
+#                 customer_id=customer_id,
+#                 total_products=total_products_ordered,
+#                 total_price=total_bill,
+#                 transaction_mode=payment_mode
+#             )
+
+#             return Response({
+#                 "transaction_id": transaction.id,
+#                 "message": "Purchase successful",
+#                 "total_price": total_bill
+#             }, status=status.HTTP_201_CREATED)
+
+#         except Exception as e:
+#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# request body
+# {
+#     "customer_id" : 2,
+#     "payment_mode" : "upi",
+#     "orders" : [{"product_id":1,
+# 	            "quantity":10},
+
+#           {"product_id":2,
+# 	        "quantity":10}
+
+#     ]
+# }
+
+
+
+# class OrderSummaryView(APIView):
+#     permission_classes = [permissions.AllowAny]
+
+#     def get(self,request,customer_id):
+#         transaction_queryset = Transaction.objects.filter(customer_id=customer_id)            
+#         order_summary = []
+#         total_spent = 0
+#         total_orders = len(transaction_queryset)
+
+#         for order in transaction_queryset:
+#             order_details = {
+#                 "transaction_id": order.id,
+#                 "total_price": order.total_price,
+#                 "payment_mode": order.transaction_mode,
+#                 "total_products": order.total_products,
+#             }
+#             order_summary.append(order_details)
+#             total_spent += order.total_price
+
+#         return Response({
+#             "order_summary": order_summary,
+#             "total_orders": total_orders,
+#             "total_spent": total_spent
+#         })
+
+
+
 # from django.shortcuts import render
 # from .models import *
 # from django.http import JsonResponse
@@ -165,8 +546,6 @@
 
 
 
-
-
 # @csrf_exempt
 # def delete_product(request):
 #     if request.method == "DELETE":
@@ -186,11 +565,6 @@
 #             return JsonResponse({"error": str(e)}, status=500)
 #     else:
 #         return JsonResponse({"error": "Invalid request method"}, status=405)
-
-
-
-
-
 
 
 
@@ -396,17 +770,6 @@
 
 
 
-
-
-
-
-
-
-
-
-
-
-
 # _______________________________set 3__________________________________________________
 
 # api view 
@@ -477,8 +840,6 @@
 
 
 
-
-
 # class ProductCRUDView(mixins.CreateModelMixin,mixins.RetrieveModelMixin,mixins.UpdateModelMixin,mixins.DestroyModelMixin,mixins.ListModelMixin,generics.GenericAPIView):
 #     queryset = Products.objects.all()
 #     serializer_class = ProductSerializer
@@ -498,339 +859,3 @@
 
 #     def delete(self, request, id=None, *args, **kwargs):
 #         return self.destroy(request, *args, **kwargs)                                                                                                     
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status, permissions
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth.hashers import make_password, check_password
-# from django.contrib.auth.models import User
-from .models import Products,CustomUser ,Transaction,PaymentMode
-from .serializers import ProductSerializer
-from rest_framework import generics, mixins, permissions,viewsets
-
-
-
-
-
-
-class RegisterView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        try:
-            email = request.data.get("email")
-            username = request.data.get("username")
-            password = request.data.get("password")
-            address = request.data.get("address")
-            phone = request.data.get("phone")
-
-            # if not email or not password:
-            #     return Response({"error": "All fields are required"}, status=status.HTTP_400_BAD_REQUEST)
-
-            if CustomUser.objects.filter(email=email).exists():
-                return Response({"error": "User already exists"}, status=status.HTTP_409_CONFLICT)
-
-            new_user = CustomUser.objects.create_user(email=email, password=password, username=username,address=address,phone=phone)
-            new_user.save()
-            return Response({"message": "User registered successfully"}, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class LoginView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        try:
-            email = request.data.get("email")
-            password = request.data.get("password")
-
-            if not email or not password:
-                return Response({"error": "Email and password are required"}, status=status.HTTP_400_BAD_REQUEST)
-
-            user_retrieved = CustomUser.objects.filter(email=email).first()
-            if  user_retrieved and user_retrieved.check_password(password):
-
-                refresh = RefreshToken.for_user(user_retrieved)
-                return Response({
-                    "message": "Login successful",
-                    "access": str(refresh.access_token),
-                    "refresh": str(refresh)
-                }, status=status.HTTP_200_OK)
-            else:
-                return Response({"error": "Invalid email or password"}, status=status.HTTP_401_UNAUTHORIZED)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
-class ProductViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin,mixins.UpdateModelMixin,mixins.DestroyModelMixin,mixins.ListModelMixin,viewsets.GenericViewSet):
-    queryset = Products.objects.all()
-    serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated,permissions.DjangoModelPermissions]
-    lookup_field = 'id'
-
-
-
-
-
-
-
-# class OrdersView(APIView):
-#     permission_classes = [permissions.AllowAny]
-
-#     def post(self, request):
-#         try:
-#             customer_id = request.data.get("customer_id")
-#             orders = request.data.get("orders", [])
-#             payment_mode = request.data.get("payment_mode", "").lower()
-
-#             if not customer_id or not orders or not payment_mode:
-#                 return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
-
-#             if payment_mode not in ["upi", "cod", "card"]:
-#                 return Response({"error": "Payment mode must be 'upi', 'cod', or 'card'."}, status=status.HTTP_400_BAD_REQUEST)
-
-#             # Fetch all products once
-#             products_queryset = Products.objects.all()
-#             products_dict = {product.id: product for product in products_queryset}  # Map by id for fast lookup
-
-#             total_bill = 0
-#             total_products_ordered = len(orders)
-
-#             for item in orders:
-#                 requested_product_id = item.get("product_id")
-#                 requested_quantity = item.get("quantity")
-
-#                 if requested_product_id not in products_dict:
-#                     return Response({"error": f"Product ID {requested_product_id} not found."}, status=status.HTTP_404_NOT_FOUND)
-
-#                 product = products_dict[requested_product_id]
-
-#                 if requested_quantity > product.stock:
-#                     return Response({"error": f"Not enough stock for product {product.name} (Available: {product.stock})"}, status=status.HTTP_400_BAD_REQUEST)
-
-#                 # Update the stock in memory
-#                 product.stock -= requested_quantity
-
-#                 # Add to the bill
-#                 total_bill += product.price * requested_quantity
-
-#             # Save the updated stock to database
-#             for product in products_dict.values():
-#                 product.save()
-
-#             # Create transaction record
-#             transaction = Transaction.objects.create(
-#                 customer_id=customer_id,
-#                 total_products=total_products_ordered,
-#                 total_price=total_bill,
-#                 transaction_mode=payment_mode
-#             )
-
-#             return Response({
-#                 "transaction_id": transaction.id,
-#                 "message": "Purchase successful",
-#                 "total_price": total_bill
-#             }, status=status.HTTP_201_CREATED)
-
-#         except Exception as e:
-#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
-
-# request body
-# {
-#     "customer_id" : 2,
-#     "payment_mode" : "upi",
-#     "orders" : [{"product_id":1,
-# 	            "quantity":10},
-
-#           {"product_id":2,
-# 	        "quantity":10}
-
-#     ]
-# }
-
-
-
-
-
-
-
-class OrdersView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        try:
-            customer_id = request.data.get("customer_id")
-            orders = request.data.get("orders", [])
-            payment_mode = request.data.get("payment_mode", "").lower()
-
-            if not customer_id or not orders or not payment_mode:
-                return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
-
-            if payment_mode not in PaymentMode.values:
-                return Response({
-                    "error": f"Invalid payment mode. Must be one of: {list(PaymentMode.values)}"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Fetch products once
-            product_ids = [item.get("product_id") for item in orders]
-            products_queryset = Products.objects.filter(id__in=product_ids)
-            products_dict = {product.id: product for product in products_queryset}
-
-            total_bill = 0
-            total_products_ordered = 0
-            transaction_items = []
-
-            for item in orders:
-                product_id = item.get("product_id")
-                quantity = item.get("quantity")
-
-                if not product_id or not quantity:
-                    return Response({"error": "Each order must include 'product_id' and 'quantity'."}, status=status.HTTP_400_BAD_REQUEST)
-
-                product = products_dict.get(product_id)
-                if not product:
-                    return Response({"error": f"Product ID {product_id} not found."}, status=status.HTTP_404_NOT_FOUND)
-
-                if quantity > product.stock:
-                    return Response({
-                        "error": f"Not enough stock for {product.name} (Available: {product.stock})"
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-                # Reduce stock
-                product.stock -= quantity
-                total_bill += product.price * quantity
-                total_products_ordered += 1
-
-                # Prepare item entry
-                transaction_items.append((product, quantity))
-
-            # Save stock
-            for product in products_dict.values():
-                product.save()
-
-            # Save transaction
-            transaction = Transaction.objects.create(
-                customer_id=customer_id,
-                total_products=total_products_ordered,
-                total_price=total_bill,
-                transaction_mode=payment_mode
-            )
-
-            # Save related products in intermediate model
-            for product, quantity in transaction_items:
-                TransactionItem.objects.create(
-                    transaction=transaction,
-                    product=product,
-                    quantity=quantity
-                )
-
-            return Response({
-                "transaction_id": transaction.id,
-                "message": "Purchase successful",
-                "total_price": total_bill
-            }, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
-
-
-
-
-
-
-class OrderSummaryView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def get(self, request, customer_id):
-        transaction_queryset = Transaction.objects.filter(customer_id=customer_id)
-        order_summary = []
-        total_spent = 0
-        total_orders = len(transaction_queryset)
-
-        for order in transaction_queryset:
-            items = TransactionItem.objects.filter(transaction=order)
-            product_list = []
-
-            for item in items:
-                product = item.product
-                product_list.append({
-                    "product_id": product.id,
-                    "name": product.name,
-                    "price": product.price,
-                    "quantity": item.quantity,
-                    "subtotal": product.price * item.quantity
-                })
-
-            order_details = {
-                "transaction_id": order.id,
-                "total_price": order.total_price,
-                "payment_mode": order.transaction_mode,
-                "total_products": order.total_products,
-                "products": product_list
-            }
-
-            order_summary.append(order_details)
-            total_spent += order.total_price
-
-        return Response({
-            "order_summary": order_summary,
-            "total_orders": total_orders,
-            "total_spent": total_spent
-        })
-
-
-
-
-
-
-
-# class OrderSummaryView(APIView):
-#     permission_classes = [permissions.AllowAny]
-
-#     def get(self,request,customer_id):
-#         transaction_queryset = Transaction.objects.filter(customer_id=customer_id)            
-#         order_summary = []
-#         total_spent = 0
-#         total_orders = len(transaction_queryset)
-
-#         for order in transaction_queryset:
-#             order_details = {
-#                 "transaction_id": order.id,
-#                 "total_price": order.total_price,
-#                 "payment_mode": order.transaction_mode,
-#                 "total_products": order.total_products,
-#             }
-#             order_summary.append(order_details)
-#             total_spent += order.total_price
-
-#         return Response({
-#             "order_summary": order_summary,
-#             "total_orders": total_orders,
-#             "total_spent": total_spent
-#         })
-
-
-
